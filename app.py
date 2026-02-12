@@ -8,70 +8,56 @@ from langchain.prompts import PromptTemplate
 from langchain.memory import ConversationBufferMemory
 
 # ────────────────────────────────────────────────
-# 1. Load vector store (cached for speed on Streamlit Cloud)
+# 1. Vector store (unchanged)
 # ────────────────────────────────────────────────
 @st.cache_resource
 def load_vectorstore():
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     index_path = "mysoft_faiss_index"
     if not os.path.exists(index_path):
-        st.error(f"FAISS index folder '{index_path}' not found. Please upload it to your repo.")
+        st.error(f"FAISS index folder '{index_path}' not found.")
         st.stop()
     try:
-        vector_store = FAISS.load_local(
+        return FAISS.load_local(
             index_path,
             embeddings,
             allow_dangerous_deserialization=True
         )
-        return vector_store
     except Exception as e:
-        st.error(f"Failed to load FAISS index: {str(e)}")
+        st.error(f"Failed to load FAISS: {str(e)}")
         st.stop()
 
 vector_store = load_vectorstore()
 
 # ────────────────────────────────────────────────
-# 2. LLM setup (serverless, with fallback & debug info)
+# 2. LLM – FIXED version
 # ────────────────────────────────────────────────
 @st.cache_resource
 def get_llm():
     hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
     if not hf_token:
-        st.error("HUGGINGFACEHUB_API_TOKEN not found in Streamlit secrets.")
-        st.info("→ Go to app settings → Secrets → add: HUGGINGFACEHUB_API_TOKEN = \"hf_xxxxxxxxxx\"")
+        st.error("HUGGINGFACEHUB_API_TOKEN missing in secrets.")
         st.stop()
 
     try:
         endpoint = HuggingFaceEndpoint(
-            repo_id="HuggingFaceH4/zephyr-7b-beta",           # reliable free serverless model
-            # repo_id="mistralai/Mistral-7B-Instruct-v0.3",   # alternative – may need task="conversational"
+            repo_id="HuggingFaceH4/zephyr-7b-beta",
             huggingfacehub_api_token=hf_token,
-            task="text-generation",                           # ← prevents dedicated endpoint routing
+            task="text-generation",
             temperature=0.15,
             max_new_tokens=600,
-            model_kwargs={"return_full_text": False},
+            return_full_text=False,               # ← this line fixes the validation error
             timeout=180,
         )
         return ChatHuggingFace(llm=endpoint)
     except Exception as e:
-        err_str = str(e).lower()
-        st.error(f"LLM initialization failed: {str(e)}")
-        if "403" in err_str or "inference.endpoints.read" in err_str:
-            st.warning("""
-            This error usually means LangChain tried to use **dedicated Inference Endpoints** instead of free serverless.
-            Fixes to try:
-            1. Regenerate token at https://huggingface.co/settings/tokens → choose **write** role
-            2. Try repo_id = "Qwen/Qwen2.5-7B-Instruct" or "mistralai/Mistral-7B-Instruct-v0.3"
-            3. Update packages: add to requirements.txt → langchain-huggingface>=0.1.0 (or latest)
-            """)
-        elif "provider" in err_str or "stopiteration" in err_str:
-            st.info("Model may not be available on any free provider right now → try different repo_id")
+        st.error(f"LLM failed: {str(e)}")
         st.stop()
 
 llm = get_llm()
 
 # ────────────────────────────────────────────────
-# 3. Strict prompt – company info only + history
+# 3. Prompt (unchanged)
 # ────────────────────────────────────────────────
 prompt_template = """\
 You are a strict company information assistant for **Mysoft Heaven (BD) Ltd.** only.
@@ -98,7 +84,7 @@ PROMPT = PromptTemplate(
 )
 
 # ────────────────────────────────────────────────
-# 4. RAG chain with memory
+# 4. Chain (unchanged)
 # ────────────────────────────────────────────────
 memory = ConversationBufferMemory(
     memory_key="chat_history",
@@ -114,14 +100,13 @@ qa_chain = ConversationalRetrievalChain.from_llm(
 )
 
 # ────────────────────────────────────────────────
-# Streamlit App
+# Streamlit UI (unchanged from your last version)
 # ────────────────────────────────────────────────
 st.set_page_config(page_title="Mysoft Heaven AI", layout="wide")
 
 st.title("Mysoft Heaven (BD) Ltd. AI Assistant")
 st.caption("Company information only – grounded answers")
 
-# Chat history
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -129,7 +114,6 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# Input
 if user_input := st.chat_input("Ask about Mysoft Heaven (BD) Ltd...."):
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
@@ -153,12 +137,9 @@ if user_input := st.chat_input("Ask about Mysoft Heaven (BD) Ltd...."):
             except Exception as e:
                 st.error("Generation failed.")
                 st.error(str(e))
-                if "token" in str(e).lower() or "403" in str(e):
-                    st.info("Check your HF token in Streamlit secrets (must have write access)")
 
     st.session_state.messages.append({"role": "assistant", "content": answer})
 
-# Clear button
 if st.button("Clear Chat"):
     st.session_state.messages = []
     memory.clear()
