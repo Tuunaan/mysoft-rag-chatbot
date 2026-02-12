@@ -32,15 +32,15 @@ if not hf_token:
     st.error("HUGGINGFACEHUB_API_TOKEN not set. Please add it in Streamlit secrets.")
     st.stop()
 
-from langchain_huggingface import HuggingFaceEndpoint  # New import
-repo_id="mistralai/Mistral-7B-Instruct-v0.3"
 llm = HuggingFaceEndpoint(
-    repo_id="repo_id",
+    repo_id="mistralai/Mistral-7B-Instruct-v0.3",
     huggingfacehub_api_token=hf_token,
     temperature=0.1,
     max_new_tokens=512,
-    task="text-generation",  # or "conversational" for chat [page:1]
-    base_url="https://router.huggingface.co",  # Correct router base
+    
+    # ── Add these two lines ──
+    base_url="https://router.huggingface.co/hf-inference",   # or just "https://router.huggingface.co" in some versions
+    task="text-generation"   # explicitly set if not auto-detected
 )
 
 
@@ -125,6 +125,7 @@ if prompt := st.chat_input("Ask a question about Mysoft Heaven"):
 
     # Save assistant message to history
     st.session_state.messages.append({"role": "assistant", "content": answer})
+
 
 
 
