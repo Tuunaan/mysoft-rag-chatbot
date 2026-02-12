@@ -1,10 +1,10 @@
-langchain==0.2.14
-langchain-community==0.2.12
-langchain-huggingface==0.0.3
-huggingface_hub==0.26.0
-faiss-cpu==1.7.4
-sentence-transformers==2.7.0
-streamlit==1.37.1
+langchain
+langchain-community
+langchain-huggingface
+huggingface_hub
+faiss-cpu
+sentence-transformers
+streamlit
 
 
 
