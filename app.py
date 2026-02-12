@@ -3,8 +3,8 @@ import os
 from langchain_community.vectorstores import FAISS as LangFAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.prompts import PromptTemplate
-from huggingface_hub import InferenceClient
 import requests
+import json
 
 # ────────────────────────────────────────────────
 #                Load Embeddings & Vector Store
@@ -23,7 +23,7 @@ except Exception as e:
     st.stop()
 
 # ────────────────────────────────────────────────
-#              Direct HTTP Client (FINAL FIX)
+#              Direct HTTP Client (FIXED)
 # ────────────────────────────────────────────────
 
 hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
@@ -32,8 +32,8 @@ if not hf_token:
     st.stop()
 
 def generate_with_direct_api(prompt: str) -> str:
-    """Direct HTTP call to router.huggingface.co - bypasses ALL client libraries"""
-    url = "https://router.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3"
+    """Use Hugging Face router with OpenAI-compatible /v1/chat/completions endpoint"""
+    url = "https://router.huggingface.co/v1/chat/completions"
     
     headers = {
         "Authorization": f"Bearer {hf_token}",
@@ -41,22 +41,35 @@ def generate_with_direct_api(prompt: str) -> str:
     }
     
     payload = {
-        "inputs": prompt,
-        "parameters": {
-            "max_new_tokens": 512,
-            "temperature": 0.1,
-            "top_p": 0.9,
-            "repetition_penalty": 1.03,
-            "stop": ["</s>", "Human:", "[INST]"],
-            "return_full_text": False
-        }
+        "model": "mistralai/Mistral-7B-Instruct-v0.3",
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "max_tokens": 512,
+        "temperature": 0.1,
+        "top_p": 0.9,
+        "frequency_penalty": 1.03,  # similar effect to repetition_penalty
+        "stop": ["</s>", "Human:", "[INST]"]
     }
     
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        response = requests.post(url, json=payload, headers=headers, timeout=45)
         response.raise_for_status()
         result = response.json()
-        return result[0]["generated_text"] if isinstance(result, list) else result.get("generated_text", "")
+        
+        # Extract the generated content
+        if "choices" in result and len(result["choices"]) > 0:
+            return result["choices"][0]["message"]["content"].strip()
+        else:
+            return "Error: No content returned from API"
+            
+    except requests.exceptions.HTTPError as http_err:
+        error_detail = ""
+        try:
+            error_detail = response.text
+        except:
+            pass
+        return f"HTTP Error: {http_err} - {error_detail}"
     except Exception as e:
         return f"API Error: {str(e)}"
 
@@ -98,7 +111,7 @@ def generate_response(query: str) -> tuple[str, list]:
     return answer, docs
 
 # ────────────────────────────────────────────────
-#                   Streamlit UI (unchanged)
+#                   Streamlit UI
 # ────────────────────────────────────────────────
 
 st.title("Mysoft Heaven AI Chatbot")
