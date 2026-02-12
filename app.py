@@ -41,8 +41,9 @@ def get_llm():
             repo_id="HuggingFaceH4/zephyr-7b-beta",
             task="text-generation",
             huggingfacehub_api_token=hf_token,
+            endpoint_url="https://router.huggingface.co/v1",  # <-- use new router
             temperature=0.15,
-            max_new_tokens=300,  # reduced to avoid timeout
+            max_new_tokens=300,
             timeout=120
         )
         llm = ChatHuggingFace(llm=endpoint)
@@ -123,7 +124,6 @@ if user_input := st.chat_input("Ask a question about the company..."):
 
                 st.markdown(answer)
 
-                # Optional: show sources
                 if sources:
                     with st.expander("Reference chunks"):
                         for i, doc in enumerate(sources, 1):
@@ -131,7 +131,7 @@ if user_input := st.chat_input("Ask a question about the company..."):
                             st.markdown(f"**Chunk {i}:** {text[:400]}{'...' if len(text) > 400 else ''}")
 
             except Exception as e:
-                # Show the actual error
+                # Show the actual HuggingFace error
                 answer = "Sorry, I am currently unable to process your request."
                 st.error(f"Error during generation: {str(e)}")
 
