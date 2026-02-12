@@ -1,100 +1,110 @@
-# import streamlit as st
-# from langchain.llms import Ollama
-# from langchain.vectorstores import FAISS as LangFAISS
-# from langchain.embeddings import HuggingFaceEmbeddings
-# from langchain.chains import RetrievalQA
-# from langchain.prompts import PromptTemplate
-# from langchain.memory import ConversationBufferMemory
+import os
 import streamlit as st
 
-# from langchain_community.llms import Ollama
+# LangChain imports (Modern 0.2.x structure)
 from langchain_community.vectorstores import FAISS as LangFAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEndpoint
 
-# from langchain.chains import RetrievalQA
-from langchain.chains.retrieval_qa.base import RetrievalQA
-from langchain.prompts import PromptTemplate
-from langchain.memory import ConversationBufferMemory
+from langchain_core.prompts import ChatPromptTemplate
+from langchain.chains import create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
 
-# Load embeddings and vector store
+
+# -------------------------------------------------------
+# 🔐 Load HuggingFace API Token from Streamlit Secrets
+# -------------------------------------------------------
+hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+
+if not hf_token:
+    st.error("HuggingFace API token not found. Please set it in Streamlit Secrets.")
+    st.stop()
+
+
+# -------------------------------------------------------
+# 🤖 Load LLM (HuggingFace Inference API)
+# -------------------------------------------------------
+llm = HuggingFaceEndpoint(
+    repo_id="mistralai/Mistral-7B-Instruct-v0.3",
+    huggingfacehub_api_token=hf_token,
+    temperature=0.1,
+    max_new_tokens=512,
+)
+
+
+# -------------------------------------------------------
+# 📚 Load Embeddings & FAISS Vector Store
+# -------------------------------------------------------
 embeddings_model = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+
 vector_store = LangFAISS.load_local(
     "mysoft_faiss_index",
     embeddings_model,
     allow_dangerous_deserialization=True
 )
-# llm = Ollama(model="mistral")
-# ///////////////////////////////////////////////////////////////////////////////////
-from langchain_huggingface import HuggingFaceEndpoint
-import os
 
-hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+retriever = vector_store.as_retriever(search_kwargs={"k": 5})
 
-llm = HuggingFaceEndpoint(
-    repo_id="mistralai/Mistral-7B-Instruct-v0.3",
-    huggingfacehub_api_token=hf_token,
-    temperature=0.1,
-    max_new_tokens=512
-)
-# ///////////////////////////////////////////////////////////////////////////////////
-# ────────────────────────────────────────────────
-# Strong prompt that enforces grounding + rejection
-# ────────────────────────────────────────────────
-prompt_template = """\
+
+# -------------------------------------------------------
+# 🧠 Strict Company Prompt
+# -------------------------------------------------------
+system_prompt = """
 You are a strict company information assistant for Mysoft Heaven (BD) Ltd.
-Answer ONLY using the provided context. Do NOT use your general knowledge.
-If the question is unrelated to Mysoft Heaven (BD) Ltd., or if the context does not contain enough information to answer, reply only with:
+Answer ONLY using the provided context.
+If the question is unrelated to Mysoft Heaven (BD) Ltd., or the context does not contain enough information, reply only with:
 
 "Sorry, I can only answer questions about Mysoft Heaven (BD) Ltd. based on the provided company information."
 
 Context:
 {context}
+"""
 
-Question: {question}
-Helpful Answer:"""
-
-PROMPT = PromptTemplate(
-    template=prompt_template,
-    input_variables=["context", "question"]
+prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", system_prompt),
+        ("human", "{input}"),
+    ]
 )
 
-qa_chain = RetrievalQA.from_chain_type(
-    llm=llm,
-    chain_type="stuff",
-    retriever=vector_store.as_retriever(search_kwargs={"k": 5}),
-    chain_type_kwargs={"prompt": PROMPT},
-    return_source_documents=True
-)
 
-st.title("Mysoft Heaven AI Chatbot")
+# -------------------------------------------------------
+# 🔗 Create Retrieval Chain (Modern LangChain 0.2)
+# -------------------------------------------------------
+document_chain = create_stuff_documents_chain(llm, prompt)
+qa_chain = create_retrieval_chain(retriever, document_chain)
 
-# Simple chat-like interface
+
+# -------------------------------------------------------
+# 🌐 Streamlit UI
+# -------------------------------------------------------
+st.set_page_config(page_title="Mysoft Heaven AI Chatbot", page_icon="🤖")
+st.title("🤖 Mysoft Heaven AI Chatbot")
+
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+# Display previous messages
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-if prompt := st.chat_input("Ask a question about Mysoft Heaven"):
-    st.session_state.messages.append({"role": "user", "content": prompt})
+# Chat input
+if user_input := st.chat_input("Ask a question about Mysoft Heaven"):
+
+    st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
-        st.markdown(prompt)
+        st.markdown(user_input)
 
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             try:
-                result = qa_chain.invoke({"query": prompt})
-                answer = result["result"]
+                result = qa_chain.invoke({"input": user_input})
+                answer = result["answer"]
                 st.markdown(answer)
 
-                # Optional: show sources for debugging / demo
-                with st.expander("Used document chunks"):
-                    for i, doc in enumerate(result["source_documents"]):
-                        st.write(f"**Chunk {i+1}**  \n{doc.page_content[:400]}...")
             except Exception as e:
-                st.error(f"Error: {str(e)}")
-                st.info("Make sure Ollama is running (`ollama run mistral`)")
-
+                answer = "An error occurred while processing your request."
+                st.error(str(e))
 
     st.session_state.messages.append({"role": "assistant", "content": answer})
