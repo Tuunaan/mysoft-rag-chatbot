@@ -25,16 +25,21 @@ except Exception as e:
     st.stop()
 
 # Load LLM via Hugging Face Endpoint (use env var for token)
-hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")  # Set this in Streamlit secrets or env
-if not hf_token:
-    st.error("HUGGINGFACEHUB_API_TOKEN not set. Please configure it.")
-    st.stop()
+
+
+
+from langchain_huggingface import HuggingFaceEndpoint
+import os
+
+hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
 
 llm = HuggingFaceEndpoint(
-    repo_id="mistralai/Mistral-7B-Instruct-v0.3",
+    endpoint_url="https://router.huggingface.co/hf-inference/models/mistralai/Mistral-7B-Instruct-v0.3",
     huggingfacehub_api_token=hf_token,
     temperature=0.1,
-    max_new_tokens=512
+    max_new_tokens=512,
+    # Optional: if the model supports it and you want chat format
+    # model_kwargs={"stop": ["</s>"]},
 )
 
 # Strong prompt for grounding and rejection
@@ -100,3 +105,4 @@ if prompt := st.chat_input("Ask a question about Mysoft Heaven"):
                 st.error(f"Error: {str(e)}")
 
     st.session_state.messages.append({"role": "assistant", "content": answer})
+
