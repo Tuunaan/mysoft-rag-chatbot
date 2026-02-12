@@ -4,7 +4,6 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.chains import ConversationalRetrievalChain
 from langchain.prompts import PromptTemplate
 from langchain.memory import ConversationBufferMemory
-
 from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
 
 # ────────────────────────────────────────────────
@@ -43,7 +42,8 @@ def get_llm():
             task="text-generation",
             huggingfacehub_api_token=hf_token,
             temperature=0.15,
-            max_new_tokens=600
+            max_new_tokens=300,  # reduced to avoid timeout
+            timeout=120
         )
         llm = ChatHuggingFace(llm=endpoint)
         return llm
@@ -102,10 +102,12 @@ st.caption("Ask questions about Mysoft Heaven (BD) Ltd. only")
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+# Display chat history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
+# Chat input
 if user_input := st.chat_input("Ask a question about the company..."):
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
@@ -121,6 +123,7 @@ if user_input := st.chat_input("Ask a question about the company..."):
 
                 st.markdown(answer)
 
+                # Optional: show sources
                 if sources:
                     with st.expander("Reference chunks"):
                         for i, doc in enumerate(sources, 1):
@@ -128,7 +131,8 @@ if user_input := st.chat_input("Ask a question about the company..."):
                             st.markdown(f"**Chunk {i}:** {text[:400]}{'...' if len(text) > 400 else ''}")
 
             except Exception as e:
+                # Show the actual error
                 answer = "Sorry, I am currently unable to process your request."
-                st.error("Error during generation.")
+                st.error(f"Error during generation: {str(e)}")
 
     st.session_state.messages.append({"role": "assistant", "content": answer})
