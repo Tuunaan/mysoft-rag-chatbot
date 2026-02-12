@@ -1,26 +1,19 @@
 import streamlit as st
 import os
-from typing import List
 
 from langchain_community.vectorstores import FAISS as LangFAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
+
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
 from langchain.memory import ConversationBufferMemory
 
 from langchain_huggingface import HuggingFaceEndpoint
 
-# ────────────────────────────────────────────────
-# Use a small model that IS supported on HF Inference Providers router
-# ────────────────────────────────────────────────
-MODEL_REPO = "Qwen/Qwen2.5-3B-Instruct"  # Reliable small model in 2026
-# Alternatives: "microsoft/Phi-3.5-mini-instruct", "google/gemma-2-2b-it"
-
-# ────────────────────────────────────────────────
-# Load vector store & embeddings (fine on CPU)
-# ────────────────────────────────────────────────
+# Load embeddings
 embeddings_model = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
+# Load vector store (assuming it's in the repo)
 try:
     vector_store = LangFAISS.load_local(
         "mysoft_faiss_index",
@@ -28,40 +21,31 @@ try:
         allow_dangerous_deserialization=True
     )
 except Exception as e:
-    st.error(f"Failed to load FAISS index: {str(e)}")
+    st.error(f"Error loading vector store: {str(e)}")
     st.stop()
 
-# ────────────────────────────────────────────────
-# LLM via HF router (serverless, no local GPU/RAM needed)
-# ────────────────────────────────────────────────
-hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+# Load LLM via Hugging Face Endpoint (use env var for token)
+hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")  # Set this in Streamlit secrets or env
 if not hf_token:
-    st.error("Missing HUGGINGFACEHUB_API_TOKEN in Streamlit secrets.")
+    st.error("HUGGINGFACEHUB_API_TOKEN not set. Please configure it.")
     st.stop()
 
 llm = HuggingFaceEndpoint(
-    repo_id=MODEL_REPO,
+    repo_id="mistralai/Mistral-7B-Instruct-v0.3",
     huggingfacehub_api_token=hf_token,
-    temperature=0.15,
-    max_new_tokens=400,          # Keep small for speed
-    top_p=0.9,
-    # No endpoint_url needed — let it auto-resolve via providers
-    # If still fails, try: provider="auto" (if your langchain-huggingface version supports it)
+    temperature=0.1,
+    max_new_tokens=512
 )
 
-# ────────────────────────────────────────────────
-# Prompt (strict grounding)
-# ────────────────────────────────────────────────
+# Strong prompt for grounding and rejection
 prompt_template = """\
 You are a strict company information assistant for Mysoft Heaven (BD) Ltd.
 Answer ONLY using the provided context. Do NOT use your general knowledge.
-If the question is unrelated or the context lacks enough info, reply only with:
+If the question is unrelated to Mysoft Heaven (BD) Ltd., or if the context does not contain enough information to answer, reply only with:
 
 "Sorry, I can only answer questions about Mysoft Heaven (BD) Ltd. based on the provided company information."
 
-Context:
-{context}
-
+Context: {context}
 Question: {question}
 Helpful Answer:"""
 
@@ -70,31 +54,33 @@ PROMPT = PromptTemplate(
     input_variables=["context", "question"]
 )
 
+# Add memory for conversation history
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
+# Create RAG chain
 qa_chain = RetrievalQA.from_chain_type(
     llm=llm,
     chain_type="stuff",
-    retriever=vector_store.as_retriever(search_kwargs={"k": 4}),
+    retriever=vector_store.as_retriever(search_kwargs={"k": 5}),
     chain_type_kwargs={"prompt": PROMPT},
-    memory=memory,
+    memory=memory,  # Enables chat history
     return_source_documents=True
 )
 
-# ────────────────────────────────────────────────
 # Streamlit UI
-# ────────────────────────────────────────────────
 st.title("Mysoft Heaven AI Chatbot")
-st.caption(f"Powered by {MODEL_REPO} via Hugging Face serverless (responses may take 5–30s)")
 
+# Initialize chat history
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+# Display chat history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-if prompt := st.chat_input("Ask about Mysoft Heaven..."):
+# User input
+if prompt := st.chat_input("Ask a question about Mysoft Heaven"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -103,13 +89,14 @@ if prompt := st.chat_input("Ask about Mysoft Heaven..."):
         with st.spinner("Thinking..."):
             try:
                 result = qa_chain.invoke({"query": prompt})
-                answer = result["result"].strip()
+                answer = result["result"]
                 st.markdown(answer)
 
-                with st.expander("Sources (document chunks)"):
+                # Optional: Show sources for debugging
+                with st.expander("Used document chunks"):
                     for i, doc in enumerate(result["source_documents"]):
-                        st.write(f"**Chunk {i+1}**  \n{doc.page_content[:350]}...")
+                        st.write(f"**Chunk {i+1}**  \n{doc.page_content[:400]}...")
             except Exception as e:
-                st.error(f"Generation error: {str(e)}\n\nPossible fixes:\n- Check token in secrets\n- Model may be temporarily unavailable → try changing MODEL_REPO\n- Rate limit → wait a few minutes")
+                st.error(f"Error: {str(e)}")
 
     st.session_state.messages.append({"role": "assistant", "content": answer})
