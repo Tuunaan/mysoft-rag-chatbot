@@ -11,7 +11,8 @@ import streamlit as st
 from langchain_community.vectorstores import FAISS as LangFAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 
-from langchain.chains import RetrievalQA
+# from langchain.chains import RetrievalQA
+from langchain.chains.retrieval_qa.base import RetrievalQA
 from langchain.prompts import PromptTemplate
 from langchain.memory import ConversationBufferMemory
 
@@ -94,5 +95,6 @@ if prompt := st.chat_input("Ask a question about Mysoft Heaven"):
             except Exception as e:
                 st.error(f"Error: {str(e)}")
                 st.info("Make sure Ollama is running (`ollama run mistral`)")
+
 
     st.session_state.messages.append({"role": "assistant", "content": answer})
