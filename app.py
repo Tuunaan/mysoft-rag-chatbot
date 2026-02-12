@@ -33,9 +33,9 @@ if not hf_token:
     st.stop()
 
 from langchain_huggingface import HuggingFaceEndpoint  # New import
-
+repo_id="mistralai/Mistral-7B-Instruct-v0.3"
 llm = HuggingFaceEndpoint(
-    repo_id="mistralai/Mistral-7B-Instruct-v0.3",
+    repo_id="repo_id",
     huggingfacehub_api_token=hf_token,
     temperature=0.1,
     max_new_tokens=512,
@@ -125,6 +125,7 @@ if prompt := st.chat_input("Ask a question about Mysoft Heaven"):
 
     # Save assistant message to history
     st.session_state.messages.append({"role": "assistant", "content": answer})
+
 
 
 
