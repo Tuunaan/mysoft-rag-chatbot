@@ -1,8 +1,0 @@
-pip cache purge 
-pip install langchain==0.2.14  
-pip install langchain-community==0.2.12  
-pip install langchain-huggingface==0.0.3 
-//pip install huggingface_hub==0.23.5  
-pip install huggingface_hub==0.26.0    
-pip install faiss-cpu sentence-transformers PyPDF2 streamlit
-pip install "pydantic<2"  
