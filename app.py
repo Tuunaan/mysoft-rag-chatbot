@@ -39,7 +39,7 @@ llm = HuggingFaceEndpoint(
     max_new_tokens=512,
     
     # ── Add these two lines ──
-    base_url="https://router.huggingface.co/hf-inference",   # or just "https://router.huggingface.co" in some versions
+    base_url="https://router.huggingface.co/v1",   # or just "https://router.huggingface.co" in some versions
     task="text-generation"   # explicitly set if not auto-detected
 )
 
@@ -125,6 +125,7 @@ if prompt := st.chat_input("Ask a question about Mysoft Heaven"):
 
     # Save assistant message to history
     st.session_state.messages.append({"role": "assistant", "content": answer})
+
 
 
 
