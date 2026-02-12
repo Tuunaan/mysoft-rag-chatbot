@@ -37,12 +37,11 @@ llm = HuggingFaceEndpoint(
     huggingfacehub_api_token=hf_token,
     temperature=0.1,
     max_new_tokens=512,
-    
-    # ── Critical 2026 fix ──
-    base_url="https://router.huggingface.co/hf-inference",
-    # You can also try: "https://router.huggingface.co" or "https://router.huggingface.co/v1"
-    # if the above gives connection/format errors
+    task="conversational",  # Key for Mistral
+    top_p=0.9,  # Improves instruct responses
+    repetition_penalty=1.03
 )
+
 
 # ────────────────────────────────────────────────
 #                     Prompt Template
@@ -124,5 +123,6 @@ if prompt := st.chat_input("Ask a question about Mysoft Heaven"):
 
     # Save assistant message to history
     st.session_state.messages.append({"role": "assistant", "content": answer})
+
 
 
