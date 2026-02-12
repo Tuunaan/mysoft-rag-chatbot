@@ -146,3 +146,4 @@ if user_input := st.chat_input("Ask a question about the company..."):
 
     # Save assistant response
     st.session_state.messages.append({"role": "assistant", "content": answer})
+
