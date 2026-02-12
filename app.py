@@ -8,36 +8,40 @@ from langchain.prompts import PromptTemplate
 from langchain.memory import ConversationBufferMemory
 
 # ────────────────────────────────────────────────
-# 1. Load vector store
+# 1. Vector store loading
 # ────────────────────────────────────────────────
 @st.cache_resource
 def load_vectorstore():
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     index_path = "mysoft_faiss_index"
+    
     if not os.path.exists(index_path):
-        st.error(f"FAISS index folder '{index_path}' not found. Please make sure it exists in the repo.")
+        st.error(f"FAISS index folder '{index_path}' not found.")
+        st.error("Make sure the folder exists in the root of your GitHub repository.")
         st.stop()
+    
     try:
-        return FAISS.load_local(
+        vector_store = FAISS.load_local(
             index_path,
             embeddings,
             allow_dangerous_deserialization=True
         )
+        return vector_store
     except Exception as e:
-        st.error(f"Failed to load FAISS index: {str(e)}")
+        st.error(f"Could not load FAISS index: {str(e)}")
         st.stop()
 
 vector_store = load_vectorstore()
 
 # ────────────────────────────────────────────────
-# 2. LLM setup (using plain HuggingFaceEndpoint)
+# 2. LLM initialization
 # ────────────────────────────────────────────────
 @st.cache_resource
 def get_llm():
     hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
     if not hf_token:
         st.error("HUGGINGFACEHUB_API_TOKEN not found in Streamlit secrets.")
-        st.info("Please add it in the Streamlit Cloud dashboard → Secrets tab")
+        st.info("Add it in Streamlit Cloud → Settings → Secrets")
         st.stop()
 
     try:
@@ -52,14 +56,14 @@ def get_llm():
         )
         return llm
     except Exception as e:
-        st.error(f"Failed to initialize LLM: {str(e)}")
-        st.info("Possible causes:\n• Invalid / expired token\n• Model not available on free inference\n• Try repo_id = 'Qwen/Qwen2.5-7B-Instruct'")
+        st.error(f"LLM initialization failed: {str(e)}")
+        st.info("Common fixes:\n• Regenerate token with write role\n• Try repo_id = 'Qwen/Qwen2.5-7B-Instruct'\n• Update langchain-huggingface package")
         st.stop()
 
 llm = get_llm()
 
 # ────────────────────────────────────────────────
-# 3. Prompt + history formatting
+# 3. Prompt & chat history formatting
 # ────────────────────────────────────────────────
 prompt_template = """\
 You are a strict company information assistant for **Mysoft Heaven (BD) Ltd.** only.
@@ -92,22 +96,24 @@ memory = ConversationBufferMemory(
 
 def format_chat_history(inputs):
     """
-    Correct handler for get_chat_history.
-    inputs is a dict with key 'chat_history' → list of BaseMessage objects
+    Correct handler for get_chat_history parameter.
+    inputs is a dict: {"chat_history": [HumanMessage, AIMessage, ...]}
     """
-    chat_history = inputs.get("chat_history", [])
-    if not chat_history:
+    chat_history_list = inputs.get("chat_history", [])
+    if not chat_history_list:
         return ""
 
     lines = []
-    for msg in chat_history:
-        # msg is HumanMessage or AIMessage
-        role = "User" if msg.type == "human" else "Assistant"
-        content = msg.content.strip()
+    for message in chat_history_list:
+        role = "User" if message.type == "human" else "Assistant"
+        content = message.content.strip()
         lines.append(f"{role}: {content}")
 
     return "\n".join(lines) + "\n\n"
 
+# ────────────────────────────────────────────────
+# 4. RAG chain
+# ────────────────────────────────────────────────
 qa_chain = ConversationalRetrievalChain.from_llm(
     llm=llm,
     retriever=vector_store.as_retriever(search_kwargs={"k": 5}),
@@ -125,18 +131,23 @@ st.set_page_config(page_title="Mysoft Heaven AI", layout="wide")
 st.title("Mysoft Heaven (BD) Ltd. AI Assistant")
 st.caption("Answers based only on company documents")
 
+# Chat history persistence
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+# Display previous messages
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
+# User input
 if user_input := st.chat_input("Ask about Mysoft Heaven (BD) Ltd...."):
+    # Show user message
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.markdown(user_input)
 
+    # Generate response
     with st.chat_message("assistant"):
         with st.spinner("Searching company documents..."):
             answer = "Sorry — generation failed. Please try again."
@@ -148,6 +159,10 @@ if user_input := st.chat_input("Ask about Mysoft Heaven (BD) Ltd...."):
             except Exception as e:
                 st.error("Error during generation:")
                 st.error(str(e))
+                if "input" in str(e).lower() or "key" in str(e).lower():
+                    st.info("Input formatting issue – check prompt variables and get_chat_history function.")
+                if "410" in str(e) or "Gone" in str(e):
+                    st.info("Hugging Face API routing changed – try repo_id = 'Qwen/Qwen2.5-7B-Instruct'")
 
             st.markdown(answer)
 
@@ -161,6 +176,7 @@ if user_input := st.chat_input("Ask about Mysoft Heaven (BD) Ltd...."):
     if "failed" not in answer.lower():
         st.session_state.messages.append({"role": "assistant", "content": answer})
 
+# Clear button
 if st.button("Clear conversation"):
     st.session_state.messages = []
     memory.clear()
