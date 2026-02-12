@@ -33,8 +33,7 @@ llm = HuggingFaceEndpoint(
     repo_id="mistralai/Mistral-7B-Instruct-v0.3",
     huggingfacehub_api_token=hf_token,
     temperature=0.1,
-    max_new_tokens=512,
-    endpoint_url="https://router.huggingface.co"
+    max_new_tokens=512
 )
 # ///////////////////////////////////////////////////////////////////////////////////
 # ────────────────────────────────────────────────
@@ -98,3 +97,4 @@ if prompt := st.chat_input("Ask a question about Mysoft Heaven"):
 
 
     st.session_state.messages.append({"role": "assistant", "content": answer})
+
