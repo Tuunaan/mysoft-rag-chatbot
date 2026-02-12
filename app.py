@@ -5,7 +5,7 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
 from langchain.memory import ConversationBufferMemory
-from langchain_huggingface import HuggingFaceEndpoint
+from huggingface_hub import InferenceClient
 
 # ────────────────────────────────────────────────
 #                Load Embeddings & Vector Store
@@ -24,7 +24,7 @@ except Exception as e:
     st.stop()
 
 # ────────────────────────────────────────────────
-#                   Load LLM (2026 compatible)
+#                   Load LLM Client (Direct HF)
 # ────────────────────────────────────────────────
 
 hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
@@ -32,25 +32,32 @@ if not hf_token:
     st.error("HUGGINGFACEHUB_API_TOKEN not set. Please add it in Streamlit secrets.")
     st.stop()
 
-llm = HuggingFaceEndpoint(
-    repo_id="mistralai/Mistral-7B-Instruct-v0.3",
-    huggingfacehub_api_token=hf_token,
-    temperature=0.1,
-    max_new_tokens=512,
-    
-    # ── Add these two lines ──
-    base_url="https://router.huggingface.co",   # or just "https://router.huggingface.co" in some versions
-    task="text-generation"   # explicitly set if not auto-detected
+# Direct HuggingFace InferenceClient (bypasses LangChain endpoint issues)
+client = InferenceClient(
+    model="mistralai/Mistral-7B-Instruct-v0.3",
+    token=hf_token
 )
 
-
+def invoke_llm(prompt: str) -> str:
+    """Custom LLM wrapper for RAG chain compatibility"""
+    try:
+        response = client.text_generation(
+            prompt,
+            max_new_tokens=512,
+            temperature=0.1,
+            top_p=0.9,
+            repetition_penalty=1.03,
+            stop_sequences=["</s>", "[INST]", "Human:"]
+        )
+        return response
+    except Exception as e:
+        return f"LLM Error: {str(e)}"
 
 # ────────────────────────────────────────────────
 #                     Prompt Template
 # ────────────────────────────────────────────────
 
-prompt_template = """\
-You are a strict company information assistant for Mysoft Heaven (BD) Ltd.
+prompt_template = """You are a strict company information assistant for Mysoft Heaven (BD) Ltd.
 Answer ONLY using the provided context. Do NOT use your general knowledge.
 If the question is unrelated to Mysoft Heaven (BD) Ltd., or if the context does not contain enough information to answer, reply only with:
 "Sorry, I can only answer questions about Mysoft Heaven (BD) Ltd. based on the provided company information."
@@ -65,8 +72,19 @@ PROMPT = PromptTemplate(
 )
 
 # ────────────────────────────────────────────────
-#                      Memory & Chain
+#                      Custom Chain
 # ────────────────────────────────────────────────
+
+class CustomLLM:
+    """Wrapper to make InferenceClient compatible with LangChain"""
+    def _call(self, prompt: str, stop=None, **kwargs) -> str:
+        return invoke_llm(prompt)
+    
+    @property
+    def _llm_type(self) -> str:
+        return "custom"
+
+llm = CustomLLM()
 
 memory = ConversationBufferMemory(
     memory_key="chat_history",
@@ -121,16 +139,7 @@ if prompt := st.chat_input("Ask a question about Mysoft Heaven"):
             except Exception as e:
                 error_msg = f"Error during generation: {str(e)}"
                 st.error(error_msg)
-                answer = error_msg  # still save something to history
+                answer = error_msg
 
     # Save assistant message to history
     st.session_state.messages.append({"role": "assistant", "content": answer})
-
-
-
-
-
-
-
-
-
