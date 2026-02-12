@@ -1,130 +1,127 @@
 import streamlit as st
+import os
 from langchain_community.vectorstores import FAISS as LangFAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
-import re
+from langchain.prompts import PromptTemplate
+from huggingface_hub import InferenceClient
+import requests
 
 # ────────────────────────────────────────────────
-#                Load Vector Store
+#                Load Embeddings & Vector Store
 # ────────────────────────────────────────────────
 
-@st.cache_resource
-def load_vector_store():
-    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+embeddings_model = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+
+try:
+    vector_store = LangFAISS.load_local(
+        "mysoft_faiss_index",
+        embeddings_model,
+        allow_dangerous_deserialization=True
+    )
+except Exception as e:
+    st.error(f"Error loading vector store: {str(e)}")
+    st.stop()
+
+# ────────────────────────────────────────────────
+#              Direct HTTP Client (FINAL FIX)
+# ────────────────────────────────────────────────
+
+hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+if not hf_token:
+    st.error("HUGGINGFACEHUB_API_TOKEN not set. Please add it in Streamlit secrets.")
+    st.stop()
+
+def generate_with_direct_api(prompt: str) -> str:
+    """Direct HTTP call to router.huggingface.co - bypasses ALL client libraries"""
+    url = "https://router.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3"
+    
+    headers = {
+        "Authorization": f"Bearer {hf_token}",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "inputs": prompt,
+        "parameters": {
+            "max_new_tokens": 512,
+            "temperature": 0.1,
+            "top_p": 0.9,
+            "repetition_penalty": 1.03,
+            "stop": ["</s>", "Human:", "[INST]"],
+            "return_full_text": False
+        }
+    }
+    
     try:
-        vector_store = LangFAISS.load_local(
-            "mysoft_faiss_index",
-            embeddings,
-            allow_dangerous_deserialization=True
-        )
-        return vector_store
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        response.raise_for_status()
+        result = response.json()
+        return result[0]["generated_text"] if isinstance(result, list) else result.get("generated_text", "")
     except Exception as e:
-        st.error(f"Vector store error: {str(e)}")
-        st.stop()
-
-vector_store = load_vector_store()
+        return f"API Error: {str(e)}"
 
 # ────────────────────────────────────────────────
-#           FIXED Offline RAG Logic
+#                     Prompt Template
 # ────────────────────────────────────────────────
 
-def clean_text(text):
-    """Clean and normalize text"""
-    text = re.sub(r'\s+', ' ', text).strip()
-    return text
+prompt_template = """You are a strict company information assistant for Mysoft Heaven (BD) Ltd.
+Answer ONLY using the provided context. Do NOT use your general knowledge.
+If the question is unrelated to Mysoft Heaven (BD) Ltd., or if the context does not contain enough information to answer, reply only with:
+"Sorry, I can only answer questions about Mysoft Heaven (BD) Ltd. based on the provided company information."
 
-def extract_relevant_content(query, docs):
-    """Extract relevant content using multiple strategies"""
-    query_lower = query.lower()
-    query_words = re.findall(r'\b\w+\b', query_lower)
-    
-    best_sentences = []
-    best_chunks = []
-    
-    for doc in docs:
-        content = clean_text(doc.page_content)
-        content_lower = content.lower()
-        
-        # Strategy 1: Exact keyword matches
-        for word in query_words:
-            if word in content_lower and len(word) > 2:
-                sentences = re.split(r'[.!?]+', content)
-                for sent in sentences:
-                    if word in sent.lower() and len(sent.strip()) > 20:
-                        best_sentences.append(clean_text(sent))
-        
-        # Strategy 2: Full chunk if highly relevant
-        score = sum(1 for word in query_words if word in content_lower)
-        if score >= len(query_words) * 0.5:  # 50% keyword match
-            best_chunks.append(content[:800])
-    
-    # Combine results
-    result = []
-    if best_sentences:
-        result.extend(best_sentences[:4])
-    if best_chunks:
-        result.append(best_chunks[0])
-    
-    if not result:
-        # Fallback: longest relevant chunk
-        result = [max(docs, key=lambda d: len(clean_text(d.page_content).split())).page_content[:800]]
-    
-    return " ".join(result)[:2500]
+Context: {context}
+Question: {question}
+Helpful Answer:"""
 
-def generate_offline_response(query: str) -> tuple[str, list]:
-    """Robust offline RAG with better extraction"""
-    retriever = vector_store.as_retriever(search_kwargs={"k": 5})
+# ────────────────────────────────────────────────
+#                   Custom RAG Function
+# ────────────────────────────────────────────────
+
+@st.cache_data
+def get_relevant_docs(query, k=5):
+    retriever = vector_store.as_retriever(search_kwargs={"k": k})
     docs = retriever.get_relevant_documents(query)
+    return docs
+
+def format_context(docs):
+    context = ""
+    for i, doc in enumerate(docs):
+        context += f"SECTION {i+1}:\n{doc.page_content}\n\n"
+    return context
+
+def generate_response(query: str) -> tuple[str, list]:
+    docs = get_relevant_docs(query)
+    context = format_context(docs)
+    full_prompt = prompt_template.format(context=context, question=query)
     
-    context = extract_relevant_content(query, docs)
-    
-    # Generate structured response
-    if "mysoft" in query.lower() or "heaven" in query.lower():
-        answer = f"**Mysoft Heaven (BD) Ltd** converts clients' Product Vision into complete product development. The development lifecycle is controlled by client inputs and direction, providing complete independence and flexibility within budget provisions.\n\n**Relevant details from documents:**\n{context[:1000]}..."
-    else:
-        answer = f"**Answer based on company documents:**\n\n{context[:1200]}...\n\n*This information is extracted directly from Mysoft Heaven (BD) Ltd. company documents.*"
-    
+    answer = generate_with_direct_api(full_prompt)
     return answer, docs
 
 # ────────────────────────────────────────────────
-#                   Streamlit UI
+#                   Streamlit UI (unchanged)
 # ────────────────────────────────────────────────
 
-st.title("🤖 Mysoft Heaven AI Assistant")
-st.markdown("**Offline RAG Chatbot** - Works with your FAISS index")
+st.title("Mysoft Heaven AI Chatbot")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Show chat history
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-# Chat input
-if user_input := st.chat_input("Ask about Mysoft Heaven..."):
-    # Add user message
-    st.session_state.messages.append({"role": "user", "content": user_input})
+if prompt := st.chat_input("Ask a question about Mysoft Heaven"):
+    st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
-        st.markdown(user_input)
+        st.markdown(prompt)
 
-    # Generate assistant response
     with st.chat_message("assistant"):
-        with st.spinner("🔍 Searching company documents..."):
-            answer, docs = generate_offline_response(user_input)
+        with st.spinner("Thinking..."):
+            answer, source_docs = generate_response(prompt)
             st.markdown(answer)
             
-            # Show sources
-            with st.expander(f"📚 Source Documents ({len(docs)} found)", expanded=True):
-                for i, doc in enumerate(docs):
-                    st.markdown(f"---\n**📄 Document {i+1}:**")
-                    preview = doc.page_content[:600]
-                    st.markdown(f"`{preview}...`")
+            with st.expander("Used document chunks"):
+                for i, doc in enumerate(source_docs):
+                    st.write(f"**Chunk {i+1}**  \n{doc.page_content[:400]}...")
 
-    # Save to history
     st.session_state.messages.append({"role": "assistant", "content": answer})
-
-# Sidebar
-with st.sidebar:
-    st.button("🗑️ Clear Chat", on_click=lambda: setattr(st.session_state, 'messages', []))
-    st.success("✅ **Fully Offline & Working**")
-    st.info("🔧 Uses advanced keyword extraction + sentence matching")
