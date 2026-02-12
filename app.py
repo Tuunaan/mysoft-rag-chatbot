@@ -26,7 +26,7 @@ def load_vectorstore():
 vector_store = load_vectorstore()
 
 # ────────────────────────────────────────────────
-# 2. LLM setup using HuggingFaceEndpoint + ChatHuggingFace
+# 2. LLM setup with free-tier compatible model
 # ────────────────────────────────────────────────
 @st.cache_resource
 def get_llm():
@@ -36,9 +36,8 @@ def get_llm():
         st.stop()
 
     try:
-        # Use new Hugging Face router endpoint
         endpoint = HuggingFaceEndpoint(
-            endpoint_url="https://router.huggingface.co/models/HuggingFaceH4/zephyr-7b-beta",
+            endpoint_url="https://api-inference.huggingface.co/models/tiiuae/falcon-7b-instruct",
             huggingfacehub_api_token=hf_token,
             temperature=0.15,
             max_new_tokens=300,
