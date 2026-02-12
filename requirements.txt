@@ -1,9 +1,13 @@
-streamlit
-langchain
-langchain-community
-langchain-huggingface
-faiss-cpu
-sentence-transformers
-huggingface-hub
+langchain==0.2.14
+langchain-community==0.2.12
+langchain-huggingface==0.0.3
+huggingface_hub==0.26.0
+
+faiss-cpu==1.7.4
+sentence-transformers==2.7.0
+PyPDF2==3.0.1
+streamlit==1.37.1
+
+
 
 
