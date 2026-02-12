@@ -4,7 +4,7 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.chains import ConversationalRetrievalChain
 from langchain.prompts import PromptTemplate
 from langchain.memory import ConversationBufferMemory
-from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
+from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
 
 # ────────────────────────────────────────────────
 # 1. Load embeddings & vector store
@@ -26,22 +26,20 @@ def load_vectorstore():
 vector_store = load_vectorstore()
 
 # ────────────────────────────────────────────────
-# 2. LLM setup with HuggingFaceEndpoint + ChatHuggingFace
+# 2. LLM setup using HuggingFaceEndpoint + ChatHuggingFace
 # ────────────────────────────────────────────────
 @st.cache_resource
 def get_llm():
     hf_token = st.secrets["HUGGINGFACEHUB_API_TOKEN"]
-
     if not hf_token:
         st.error("HUGGINGFACEHUB_API_TOKEN not found in secrets.")
         st.stop()
 
     try:
+        # Use new Hugging Face router endpoint
         endpoint = HuggingFaceEndpoint(
-            repo_id="HuggingFaceH4/zephyr-7b-beta",
-            task="text-generation",
+            endpoint_url="https://router.huggingface.co/models/HuggingFaceH4/zephyr-7b-beta",
             huggingfacehub_api_token=hf_token,
-            endpoint_url="https://router.huggingface.co/v1",  # <-- use new router
             temperature=0.15,
             max_new_tokens=300,
             timeout=120
@@ -131,7 +129,6 @@ if user_input := st.chat_input("Ask a question about the company..."):
                             st.markdown(f"**Chunk {i}:** {text[:400]}{'...' if len(text) > 400 else ''}")
 
             except Exception as e:
-                # Show the actual HuggingFace error
                 answer = "Sorry, I am currently unable to process your request."
                 st.error(f"Error during generation: {str(e)}")
 
