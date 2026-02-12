@@ -2,8 +2,7 @@ import streamlit as st
 import os
 from langchain_community.vectorstores import FAISS as LangFAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain.prompts import PromptTemplate
-import requests
+from huggingface_hub import InferenceClient
 import json
 
 # ────────────────────────────────────────────────
@@ -23,7 +22,7 @@ except Exception as e:
     st.stop()
 
 # ────────────────────────────────────────────────
-#              Direct HTTP Client (FIXED)
+#              Hugging Face Inference Client
 # ────────────────────────────────────────────────
 
 hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
@@ -31,47 +30,39 @@ if not hf_token:
     st.error("HUGGINGFACEHUB_API_TOKEN not set. Please add it in Streamlit secrets.")
     st.stop()
 
-def generate_with_direct_api(prompt: str) -> str:
-    """Use Hugging Face router with OpenAI-compatible /v1/chat/completions endpoint"""
-    url = "https://router.huggingface.co/v1/chat/completions"
-    
-    headers = {
-        "Authorization": f"Bearer {hf_token}",
-        "Content-Type": "application/json"
-    }
-    
-    payload = {
-        "model": "mistralai/Mistral-7B-Instruct-v0.3",
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
-        "max_tokens": 512,
-        "temperature": 0.1,
-        "top_p": 0.9,
-        "frequency_penalty": 1.03,  # similar effect to repetition_penalty
-        "stop": ["</s>", "Human:", "[INST]"]
-    }
-    
+# Initialize the client once
+client = InferenceClient(token=hf_token)
+
+# Choose a model that works well with chat completions on HF inference
+# Good options in 2025–2026:
+# - meta-llama/Llama-3.1-8B-Instruct
+# - mistralai/Mistral-Nemo-Instruct-2407
+# - Qwen/Qwen2.5-7B-Instruct
+# - google/gemma-2-9b-it
+MODEL_NAME = "meta-llama/Llama-3.1-8B-Instruct"  # ← change here if needed
+
+def generate_with_hf_client(prompt: str) -> str:
+    """Generate response using Hugging Face InferenceClient (chat completions)"""
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=45)
-        response.raise_for_status()
-        result = response.json()
-        
-        # Extract the generated content
-        if "choices" in result and len(result["choices"]) > 0:
-            return result["choices"][0]["message"]["content"].strip()
-        else:
-            return "Error: No content returned from API"
-            
-    except requests.exceptions.HTTPError as http_err:
-        error_detail = ""
-        try:
-            error_detail = response.text
-        except:
-            pass
-        return f"HTTP Error: {http_err} - {error_detail}"
+        completion = client.chat_completion(
+            messages=[{"role": "user", "content": prompt}],
+            model=MODEL_NAME,
+            max_tokens=512,
+            temperature=0.1,
+            top_p=0.9,
+            stop=["</s>", "Human:", "[INST]"],
+        )
+        return completion.choices[0].message.content.strip()
     except Exception as e:
-        return f"API Error: {str(e)}"
+        error_msg = str(e)
+        # Try to extract more detailed error message if available
+        if hasattr(e, 'response') and e.response is not None:
+            try:
+                error_detail = e.response.json()
+                error_msg = f"{error_msg} - {json.dumps(error_detail)}"
+            except:
+                pass
+        return f"Generation Error: {error_msg}"
 
 # ────────────────────────────────────────────────
 #                     Prompt Template
@@ -107,7 +98,7 @@ def generate_response(query: str) -> tuple[str, list]:
     context = format_context(docs)
     full_prompt = prompt_template.format(context=context, question=query)
     
-    answer = generate_with_direct_api(full_prompt)
+    answer = generate_with_hf_client(full_prompt)
     return answer, docs
 
 # ────────────────────────────────────────────────
@@ -131,10 +122,15 @@ if prompt := st.chat_input("Ask a question about Mysoft Heaven"):
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             answer, source_docs = generate_response(prompt)
+            
+            # Display the answer
             st.markdown(answer)
             
+            # Show source chunks in an expander
             with st.expander("Used document chunks"):
                 for i, doc in enumerate(source_docs):
                     st.write(f"**Chunk {i+1}**  \n{doc.page_content[:400]}...")
+                    if len(doc.page_content) > 400:
+                        st.write("...")
 
     st.session_state.messages.append({"role": "assistant", "content": answer})
