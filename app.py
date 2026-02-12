@@ -30,19 +30,13 @@ if not hf_token:
     st.error("HUGGINGFACEHUB_API_TOKEN not set. Please add it in Streamlit secrets.")
     st.stop()
 
-# Initialize the client once
 client = InferenceClient(token=hf_token)
 
-# Choose a model that works well with chat completions on HF inference
-# Good options in 2025–2026:
-# - meta-llama/Llama-3.1-8B-Instruct
-# - mistralai/Mistral-Nemo-Instruct-2407
-# - Qwen/Qwen2.5-7B-Instruct
-# - google/gemma-2-9b-it
-MODEL_NAME = "meta-llama/Llama-3.1-8B-Instruct"  # ← change here if needed
+# Use a model with better free/warm support in 2026
+MODEL_NAME = "Qwen/Qwen2.5-7B-Instruct"  # ← Changed here — good balance of quality & availability
 
 def generate_with_hf_client(prompt: str) -> str:
-    """Generate response using Hugging Face InferenceClient (chat completions)"""
+    """Generate response using Hugging Face InferenceClient"""
     try:
         completion = client.chat_completion(
             messages=[{"role": "user", "content": prompt}],
@@ -55,7 +49,6 @@ def generate_with_hf_client(prompt: str) -> str:
         return completion.choices[0].message.content.strip()
     except Exception as e:
         error_msg = str(e)
-        # Try to extract more detailed error message if available
         if hasattr(e, 'response') and e.response is not None:
             try:
                 error_detail = e.response.json()
@@ -123,10 +116,8 @@ if prompt := st.chat_input("Ask a question about Mysoft Heaven"):
         with st.spinner("Thinking..."):
             answer, source_docs = generate_response(prompt)
             
-            # Display the answer
             st.markdown(answer)
             
-            # Show source chunks in an expander
             with st.expander("Used document chunks"):
                 for i, doc in enumerate(source_docs):
                     st.write(f"**Chunk {i+1}**  \n{doc.page_content[:400]}...")
