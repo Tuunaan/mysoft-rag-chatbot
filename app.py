@@ -11,14 +11,13 @@ from langchain.memory import ConversationBufferMemory
 from langchain_huggingface import HuggingFaceEndpoint
 
 # ────────────────────────────────────────────────
-# Config: Use a small, fast, free-tier friendly model
+# Use a small model that IS supported on HF Inference Providers router
 # ────────────────────────────────────────────────
-MODEL_REPO = "Qwen/Qwen2.5-3B-Instruct"          # Very good 3B model — change to Phi-3.5-mini-instruct or SmolLM3-3B if preferred
-# MODEL_REPO = "microsoft/Phi-3.5-mini-instruct"
-# MODEL_REPO = "HuggingFaceTB/SmolLM3-3B"
+MODEL_REPO = "Qwen/Qwen2.5-3B-Instruct"  # Reliable small model in 2026
+# Alternatives: "microsoft/Phi-3.5-mini-instruct", "google/gemma-2-2b-it"
 
 # ────────────────────────────────────────────────
-# Load embeddings & vector store (this part is CPU-only & fine)
+# Load vector store & embeddings (fine on CPU)
 # ────────────────────────────────────────────────
 embeddings_model = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
@@ -33,25 +32,25 @@ except Exception as e:
     st.stop()
 
 # ────────────────────────────────────────────────
-# LLM via HF router (serverless — no local GPU/RAM needed)
+# LLM via HF router (serverless, no local GPU/RAM needed)
 # ────────────────────────────────────────────────
 hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
 if not hf_token:
-    st.error("HUGGINGFACEHUB_API_TOKEN not set in Streamlit secrets.")
+    st.error("Missing HUGGINGFACEHUB_API_TOKEN in Streamlit secrets.")
     st.stop()
 
 llm = HuggingFaceEndpoint(
     repo_id=MODEL_REPO,
     huggingfacehub_api_token=hf_token,
-    # Use router explicitly (fixes old endpoint 410 error)
-    endpoint_url="https://router.huggingface.co/hf-inference/models/" + MODEL_REPO,
     temperature=0.15,
-    max_new_tokens=400,          # smaller → faster
+    max_new_tokens=400,          # Keep small for speed
     top_p=0.9,
+    # No endpoint_url needed — let it auto-resolve via providers
+    # If still fails, try: provider="auto" (if your langchain-huggingface version supports it)
 )
 
 # ────────────────────────────────────────────────
-# Strong grounding prompt
+# Prompt (strict grounding)
 # ────────────────────────────────────────────────
 prompt_template = """\
 You are a strict company information assistant for Mysoft Heaven (BD) Ltd.
@@ -71,14 +70,12 @@ PROMPT = PromptTemplate(
     input_variables=["context", "question"]
 )
 
-# Add memory
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
-# RAG chain
 qa_chain = RetrievalQA.from_chain_type(
     llm=llm,
     chain_type="stuff",
-    retriever=vector_store.as_retriever(search_kwargs={"k": 4}),  # fewer docs → faster
+    retriever=vector_store.as_retriever(search_kwargs={"k": 4}),
     chain_type_kwargs={"prompt": PROMPT},
     memory=memory,
     return_source_documents=True
@@ -88,7 +85,7 @@ qa_chain = RetrievalQA.from_chain_type(
 # Streamlit UI
 # ────────────────────────────────────────────────
 st.title("Mysoft Heaven AI Chatbot")
-st.caption("Using small & fast Qwen2.5-3B-Instruct via Hugging Face serverless inference")
+st.caption(f"Powered by {MODEL_REPO} via Hugging Face serverless (responses may take 5–30s)")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -103,17 +100,16 @@ if prompt := st.chat_input("Ask about Mysoft Heaven..."):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner("Thinking (may take 5–30 seconds)..."):
+        with st.spinner("Thinking..."):
             try:
                 result = qa_chain.invoke({"query": prompt})
                 answer = result["result"].strip()
-
                 st.markdown(answer)
 
-                with st.expander("Sources"):
+                with st.expander("Sources (document chunks)"):
                     for i, doc in enumerate(result["source_documents"]):
-                        st.write(f"**Chunk {i+1}**\n{doc.page_content[:350]}...")
+                        st.write(f"**Chunk {i+1}**  \n{doc.page_content[:350]}...")
             except Exception as e:
-                st.error(f"Error: {str(e)}\n\nPossible fixes:\n• Check token in secrets\n• Model may be rate-limited — try later or switch MODEL_REPO")
+                st.error(f"Generation error: {str(e)}\n\nPossible fixes:\n- Check token in secrets\n- Model may be temporarily unavailable → try changing MODEL_REPO\n- Rate limit → wait a few minutes")
 
     st.session_state.messages.append({"role": "assistant", "content": answer})
