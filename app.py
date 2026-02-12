@@ -1,9 +1,9 @@
 import streamlit as st
 import os
+import requests
+import json
 from langchain_community.vectorstores import FAISS as LangFAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from huggingface_hub import InferenceClient
-import json
 
 # ────────────────────────────────────────────────
 #                Load Embeddings & Vector Store
@@ -22,7 +22,7 @@ except Exception as e:
     st.stop()
 
 # ────────────────────────────────────────────────
-#              Hugging Face Inference Client
+#              Hugging Face Router API
 # ────────────────────────────────────────────────
 
 hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
@@ -30,32 +30,49 @@ if not hf_token:
     st.error("HUGGINGFACEHUB_API_TOKEN not set. Please add it in Streamlit secrets.")
     st.stop()
 
-client = InferenceClient(token=hf_token)
+MODEL_NAME = "Qwen/Qwen2.5-7B-Instruct"  # Reliable model on current router
 
-# Use a model with better free/warm support in 2026
-MODEL_NAME = "Qwen/Qwen2.5-7B-Instruct"  # ← Changed here — good balance of quality & availability
-
-def generate_with_hf_client(prompt: str) -> str:
-    """Generate response using Hugging Face InferenceClient"""
+def generate_response_from_hf(prompt: str) -> str:
+    """Call Hugging Face router directly using OpenAI-compatible endpoint"""
+    url = "https://router.huggingface.co/v1/chat/completions"
+    
+    headers = {
+        "Authorization": f"Bearer {hf_token}",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "model": MODEL_NAME,
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "max_tokens": 600,
+        "temperature": 0.1,
+        "top_p": 0.9,
+        "stop": ["</s>", "Human:", "[INST]"]
+    }
+    
     try:
-        completion = client.chat_completion(
-            messages=[{"role": "user", "content": prompt}],
-            model=MODEL_NAME,
-            max_tokens=512,
-            temperature=0.1,
-            top_p=0.9,
-            stop=["</s>", "Human:", "[INST]"],
-        )
-        return completion.choices[0].message.content.strip()
+        with st.spinner("Generating answer..."):
+            response = requests.post(url, json=payload, headers=headers, timeout=60)
+            response.raise_for_status()
+            result = response.json()
+            
+            if "choices" in result and len(result["choices"]) > 0:
+                content = result["choices"][0]["message"]["content"].strip()
+                return content
+            else:
+                return "Error: No valid response received from the model."
+                
+    except requests.exceptions.HTTPError as http_err:
+        try:
+            error_detail = response.json()
+            error_msg = error_detail.get("error", {}).get("message", str(http_err))
+        except:
+            error_msg = str(http_err)
+        return f"HTTP Error: {error_msg}"
     except Exception as e:
-        error_msg = str(e)
-        if hasattr(e, 'response') and e.response is not None:
-            try:
-                error_detail = e.response.json()
-                error_msg = f"{error_msg} - {json.dumps(error_detail)}"
-            except:
-                pass
-        return f"Generation Error: {error_msg}"
+        return f"Unexpected error: {str(e)}"
 
 # ────────────────────────────────────────────────
 #                     Prompt Template
@@ -71,7 +88,7 @@ Question: {question}
 Helpful Answer:"""
 
 # ────────────────────────────────────────────────
-#                   Custom RAG Function
+#                   RAG Helpers
 # ────────────────────────────────────────────────
 
 @st.cache_data
@@ -81,17 +98,19 @@ def get_relevant_docs(query, k=5):
     return docs
 
 def format_context(docs):
+    if not docs:
+        return "No relevant information found in the company documents."
     context = ""
     for i, doc in enumerate(docs):
         context += f"SECTION {i+1}:\n{doc.page_content}\n\n"
     return context
 
-def generate_response(query: str) -> tuple[str, list]:
+def generate_rag_response(query: str) -> tuple[str, list]:
     docs = get_relevant_docs(query)
     context = format_context(docs)
     full_prompt = prompt_template.format(context=context, question=query)
     
-    answer = generate_with_hf_client(full_prompt)
+    answer = generate_response_from_hf(full_prompt)
     return answer, docs
 
 # ────────────────────────────────────────────────
@@ -100,28 +119,43 @@ def generate_response(query: str) -> tuple[str, list]:
 
 st.title("Mysoft Heaven AI Chatbot")
 
+# Sidebar with Clear Chat button
+with st.sidebar:
+    st.title("Controls")
+    if st.button("Clear Chat History"):
+        st.session_state.messages = []
+        st.success("Chat history cleared!")
+        st.rerun()
+
+# Initialize chat history
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+# Display chat history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-if prompt := st.chat_input("Ask a question about Mysoft Heaven"):
+# Chat input
+if prompt := st.chat_input("Ask a question about Mysoft Heaven (BD) Ltd..."):
+    # Add user message
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
+    # Generate and display assistant response
     with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            answer, source_docs = generate_response(prompt)
-            
-            st.markdown(answer)
-            
-            with st.expander("Used document chunks"):
+        answer, source_docs = generate_rag_response(prompt)
+        st.markdown(answer)
+        
+        # Show sources
+        with st.expander("Used document chunks"):
+            if not source_docs:
+                st.info("No relevant documents were retrieved.")
+            else:
                 for i, doc in enumerate(source_docs):
-                    st.write(f"**Chunk {i+1}**  \n{doc.page_content[:400]}...")
-                    if len(doc.page_content) > 400:
-                        st.write("...")
+                    content_preview = doc.page_content[:380] + "..." if len(doc.page_content) > 380 else doc.page_content
+                    st.markdown(f"**Chunk {i+1}**  \n{content_preview}")
 
+    # Save assistant response
     st.session_state.messages.append({"role": "assistant", "content": answer})
