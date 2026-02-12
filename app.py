@@ -2,7 +2,6 @@ import streamlit as st
 import os
 from langchain_community.vectorstores import FAISS as LangFAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
 from langchain.memory import ConversationBufferMemory
 from huggingface_hub import InferenceClient
@@ -32,26 +31,10 @@ if not hf_token:
     st.error("HUGGINGFACEHUB_API_TOKEN not set. Please add it in Streamlit secrets.")
     st.stop()
 
-# Direct HuggingFace InferenceClient (bypasses LangChain endpoint issues)
 client = InferenceClient(
     model="mistralai/Mistral-7B-Instruct-v0.3",
     token=hf_token
 )
-
-def invoke_llm(prompt: str) -> str:
-    """Custom LLM wrapper for RAG chain compatibility"""
-    try:
-        response = client.text_generation(
-            prompt,
-            max_new_tokens=512,
-            temperature=0.1,
-            top_p=0.9,
-            repetition_penalty=1.03,
-            stop_sequences=["</s>", "[INST]", "Human:"]
-        )
-        return response
-    except Exception as e:
-        return f"LLM Error: {str(e)}"
 
 # ────────────────────────────────────────────────
 #                     Prompt Template
@@ -66,39 +49,46 @@ Context: {context}
 Question: {question}
 Helpful Answer:"""
 
-PROMPT = PromptTemplate(
-    template=prompt_template,
-    input_variables=["context", "question"]
-)
-
 # ────────────────────────────────────────────────
-#                      Custom Chain
+#                   Custom RAG Function
 # ────────────────────────────────────────────────
 
-class CustomLLM:
-    """Wrapper to make InferenceClient compatible with LangChain"""
-    def _call(self, prompt: str, stop=None, **kwargs) -> str:
-        return invoke_llm(prompt)
+@st.cache_data
+def get_relevant_docs(query, k=5):
+    """Retrieve relevant documents from FAISS"""
+    retriever = vector_store.as_retriever(search_kwargs={"k": k})
+    docs = retriever.get_relevant_documents(query)
+    return docs
+
+def format_context(docs):
+    """Format documents into context string"""
+    context = ""
+    for i, doc in enumerate(docs):
+        context += f"SECTION {i+1}:\n{doc.page_content}\n\n"
+    return context
+
+def generate_response(query: str) -> tuple[str, list]:
+    """Full RAG pipeline without LangChain chains"""
+    # Retrieve relevant docs
+    docs = get_relevant_docs(query)
+    context = format_context(docs)
     
-    @property
-    def _llm_type(self) -> str:
-        return "custom"
-
-llm = CustomLLM()
-
-memory = ConversationBufferMemory(
-    memory_key="chat_history",
-    return_messages=True
-)
-
-qa_chain = RetrievalQA.from_chain_type(
-    llm=llm,
-    chain_type="stuff",
-    retriever=vector_store.as_retriever(search_kwargs={"k": 5}),
-    chain_type_kwargs={"prompt": PROMPT},
-    memory=memory,
-    return_source_documents=True
-)
+    # Format full prompt
+    full_prompt = prompt_template.format(context=context, question=query)
+    
+    # Generate with HF InferenceClient
+    try:
+        response = client.text_generation(
+            full_prompt,
+            max_new_tokens=512,
+            temperature=0.1,
+            top_p=0.9,
+            repetition_penalty=1.03,
+            stop_sequences=["</s>", "Human:", "[INST]"]
+        )
+        return response, docs
+    except Exception as e:
+        return f"LLM Error: {str(e)}", docs
 
 # ────────────────────────────────────────────────
 #                   Streamlit UI
@@ -125,21 +115,14 @@ if prompt := st.chat_input("Ask a question about Mysoft Heaven"):
     # Generate & show assistant response
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
-            try:
-                result = qa_chain.invoke({"query": prompt})
-                answer = result["result"]
-
-                st.markdown(answer)
-
-                # Optional: show source chunks (good for debugging)
-                with st.expander("Used document chunks"):
-                    for i, doc in enumerate(result["source_documents"]):
-                        st.write(f"**Chunk {i+1}**  \n{doc.page_content[:400]}...")
-
-            except Exception as e:
-                error_msg = f"Error during generation: {str(e)}"
-                st.error(error_msg)
-                answer = error_msg
+            answer, source_docs = generate_response(prompt)
+            
+            st.markdown(answer)
+            
+            # Show source chunks
+            with st.expander("Used document chunks"):
+                for i, doc in enumerate(source_docs):
+                    st.write(f"**Chunk {i+1}**  \n{doc.page_content[:400]}...")
 
     # Save assistant message to history
     st.session_state.messages.append({"role": "assistant", "content": answer})
