@@ -26,5 +26,5 @@ It refuses to answer questions outside the provided context or using general kno
 - **Environment**: Python 3.8+
 
 
-## priject link
+## project link
 https://mysoft-rag-chatbot-yn4r6wabvvrrjtu7ufj6jn.streamlit.app/
