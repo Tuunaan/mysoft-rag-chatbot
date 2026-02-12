@@ -1,83 +1,148 @@
-
- 
-# import streamlit as st
-# from langchain.llms import Ollama
-# from langchain.vectorstores import FAISS as LangFAISS
-# from langchain.embeddings import HuggingFaceEmbeddings
-# from langchain.chains import RetrievalQA
-# from langchain.prompts import PromptTemplate
-# from langchain.memory import ConversationBufferMemory
 import streamlit as st
-# from langchain_community.llms import Ollama
-from langchain_community.vectorstores import FAISS as LangFAISS
+import os
+from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
+from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain.chains import RetrievalQA
+from langchain.chains import ConversationalRetrievalChain
 from langchain.prompts import PromptTemplate
 from langchain.memory import ConversationBufferMemory
-# Load embeddings and vector store
-embeddings_model = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-vector_store = LangFAISS.load_local(
-    "mysoft_faiss_index",
-    embeddings_model,
-    allow_dangerous_deserialization=True
-)
-# llm = Ollama(model="mistral")
-# ///////////////////////////////////////////////////////////////////////////////////
-from langchain_huggingface import HuggingFaceEndpoint
-import os
-hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
-llm = HuggingFaceEndpoint(
-    repo_id="mistralai/Mistral-7B-Instruct-v0.3",
-    huggingfacehub_api_token=hf_token,
-    temperature=0.1,
-    max_new_tokens=512
-)
-# ///////////////////////////////////////////////////////////////////////////////////
+
 # ────────────────────────────────────────────────
-# Strong prompt that enforces grounding + rejection
+# 1. Load embeddings & vector store
+# ────────────────────────────────────────────────
+@st.cache_resource
+def load_vectorstore():
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    try:
+        vector_store = FAISS.load_local(
+            "mysoft_faiss_index",
+            embeddings,
+            allow_dangerous_deserialization=True
+        )
+        return vector_store
+    except Exception as e:
+        st.error(f"Failed to load FAISS index: {str(e)}")
+        st.stop()
+
+vector_store = load_vectorstore()
+
+# ────────────────────────────────────────────────
+# 2. LLM setup (using ChatHuggingFace wrapper)
+# ────────────────────────────────────────────────
+@st.cache_resource
+def get_llm():
+    hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+    if not hf_token:
+        st.error("HUGGINGFACEHUB_API_TOKEN not found in environment variables.")
+        st.stop()
+
+    try:
+        endpoint = HuggingFaceEndpoint(
+            repo_id="HuggingFaceH4/zephyr-7b-beta",          # very reliable on free tier
+            # repo_id="mistralai/Mistral-7B-Instruct-v0.3",  # ← uncomment if you prefer (may need task="conversational")
+            huggingfacehub_api_token=hf_token,
+            temperature=0.15,
+            max_new_tokens=600,
+            timeout=120,
+        )
+        return ChatHuggingFace(llm=endpoint)
+    except Exception as e:
+        st.error(f"Failed to initialize HuggingFace Endpoint: {str(e)}")
+        st.info("Check token validity, quota, or try a different model.")
+        st.stop()
+
+llm = get_llm()
+
+# ────────────────────────────────────────────────
+# 3. Strict RAG prompt (forces grounding)
 # ────────────────────────────────────────────────
 prompt_template = """\
-You are a strict company information assistant for Mysoft Heaven (BD) Ltd.
-Answer ONLY using the provided context. Do NOT use your general knowledge.
-If the question is unrelated to Mysoft Heaven (BD) Ltd., or if the context does not contain enough information to answer, reply only with:
-"Sorry, I can only answer questions about Mysoft Heaven (BD) Ltd. based on the provided company information."
-Context:
+You are a strict company information assistant for **Mysoft Heaven (BD) Ltd.** only.
+
+Rules you MUST follow:
+- Answer using **only** the provided context below.
+- Do NOT use your general knowledge or make up information.
+- If the question is unrelated to Mysoft Heaven (BD) Ltd., or if the context does not contain the answer, reply **only** with this exact sentence:
+  "Sorry, I can only answer questions about Mysoft Heaven (BD) Ltd. based on the provided company information."
+
+Conversation history:
+{chat_history}
+
+Current context:
 {context}
+
 Question: {question}
-Helpful Answer:"""
+
+Concise, professional answer:"""
+
 PROMPT = PromptTemplate(
     template=prompt_template,
-    input_variables=["context", "question"]
+    input_variables=["context", "question", "chat_history"]
 )
-qa_chain = RetrievalQA.from_chain_type(
+
+# ────────────────────────────────────────────────
+# 4. Create conversational RAG chain
+# ────────────────────────────────────────────────
+memory = ConversationBufferMemory(
+    memory_key="chat_history",
+    return_messages=True
+)
+
+qa_chain = ConversationalRetrievalChain.from_llm(
     llm=llm,
-    chain_type="stuff",
     retriever=vector_store.as_retriever(search_kwargs={"k": 5}),
-    chain_type_kwargs={"prompt": PROMPT},
+    memory=memory,
+    combine_docs_chain_kwargs={"prompt": PROMPT},
     return_source_documents=True
 )
-st.title("Mysoft Heaven AI Chatbot")
-# Simple chat-like interface
+
+# ────────────────────────────────────────────────
+# Streamlit UI
+# ────────────────────────────────────────────────
+st.title("Mysoft Heaven AI Assistant")
+st.caption("Ask questions about Mysoft Heaven (BD) Ltd. only")
+
+# Initialize chat history
 if "messages" not in st.session_state:
     st.session_state.messages = []
+
+# Display chat history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
-if prompt := st.chat_input("Ask a question about Mysoft Heaven"):
-    st.session_state.messages.append({"role": "user", "content": prompt})
+
+# Chat input
+if user_input := st.chat_input("Ask a question about the company..."):
+    # Add user message
+    st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
-        st.markdown(prompt)
+        st.markdown(user_input)
+
+    # Generate response
     with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
+        with st.spinner("Searching company information..."):
             try:
-                result = qa_chain.invoke({"query": prompt})
-                answer = result["result"]
+                result = qa_chain.invoke({"question": user_input})
+
+                answer = result["answer"].strip()
+                sources = result["source_documents"]
+
                 st.markdown(answer)
-                # Optional: show sources for debugging / demo
-                with st.expander("Used document chunks"):
-                    for i, doc in enumerate(result["source_documents"]):
-                        st.write(f"**Chunk {i+1}** \n{doc.page_content[:400]}...")
+
+                # Optional: show sources
+                if sources:
+                    with st.expander("Reference chunks", expanded=False):
+                        for i, doc in enumerate(sources, 1):
+                            content = doc.page_content.strip()
+                            st.markdown(f"**Chunk {i}**  \n{content[:450]}{'...' if len(content) > 450 else ''}")
+
             except Exception as e:
-                st.error(f"Error: {str(e)}")
-                st.info("Check your HuggingFace API token / model availability")
-    st.session_state.messages.append({"role": "assistant", "content": answer
+                error_msg = str(e).lower()
+                if "token" in error_msg or "quota" in error_msg:
+                    st.error("Hugging Face API issue (token / rate limit / model unavailable)")
+                else:
+                    st.error(f"Error during generation: {str(e)}")
+                st.info("The team has been notified. Please try again later.")
+
+    # Save assistant response
+    st.session_state.messages.append({"role": "assistant", "content": answer})
