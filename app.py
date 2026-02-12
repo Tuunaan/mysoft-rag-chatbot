@@ -7,10 +7,12 @@ from langchain.prompts import PromptTemplate
 from langchain.memory import ConversationBufferMemory
 from langchain_huggingface import HuggingFaceEndpoint
 
-# Load embeddings
+# ────────────────────────────────────────────────
+#                Load Embeddings & Vector Store
+# ────────────────────────────────────────────────
+
 embeddings_model = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
-# Load vector store
 try:
     vector_store = LangFAISS.load_local(
         "mysoft_faiss_index",
@@ -21,20 +23,31 @@ except Exception as e:
     st.error(f"Error loading vector store: {str(e)}")
     st.stop()
 
-# Load LLM
+# ────────────────────────────────────────────────
+#                   Load LLM (2026 compatible)
+# ────────────────────────────────────────────────
+
 hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
 if not hf_token:
-    st.error("HUGGINGFACEHUB_API_TOKEN not set. Please configure it in Streamlit secrets.")
+    st.error("HUGGINGFACEHUB_API_TOKEN not set. Please add it in Streamlit secrets.")
     st.stop()
 
 llm = HuggingFaceEndpoint(
     repo_id="mistralai/Mistral-7B-Instruct-v0.3",
     huggingfacehub_api_token=hf_token,
     temperature=0.1,
-    max_new_tokens=512
+    max_new_tokens=512,
+    
+    # ── Critical 2026 fix ──
+    base_url="https://router.huggingface.co/hf-inference",
+    # You can also try: "https://router.huggingface.co" or "https://router.huggingface.co/v1"
+    # if the above gives connection/format errors
 )
 
-# Strong prompt
+# ────────────────────────────────────────────────
+#                     Prompt Template
+# ────────────────────────────────────────────────
+
 prompt_template = """\
 You are a strict company information assistant for Mysoft Heaven (BD) Ltd.
 Answer ONLY using the provided context. Do NOT use your general knowledge.
@@ -50,10 +63,15 @@ PROMPT = PromptTemplate(
     input_variables=["context", "question"]
 )
 
-# Memory
-memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+# ────────────────────────────────────────────────
+#                      Memory & Chain
+# ────────────────────────────────────────────────
 
-# RAG chain
+memory = ConversationBufferMemory(
+    memory_key="chat_history",
+    return_messages=True
+)
+
 qa_chain = RetrievalQA.from_chain_type(
     llm=llm,
     chain_type="stuff",
@@ -64,7 +82,7 @@ qa_chain = RetrievalQA.from_chain_type(
 )
 
 # ────────────────────────────────────────────────
-#               Streamlit UI
+#                   Streamlit UI
 # ────────────────────────────────────────────────
 
 st.title("Mysoft Heaven AI Chatbot")
@@ -73,37 +91,36 @@ st.title("Mysoft Heaven AI Chatbot")
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Display chat history
+# Display previous messages
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
 # User input
 if prompt := st.chat_input("Ask a question about Mysoft Heaven"):
-    # Add user message to chat history and display it
+    # Show user message
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Generate response
+    # Generate & show assistant response
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             try:
                 result = qa_chain.invoke({"query": prompt})
                 answer = result["result"]
 
-                # Display the answer
                 st.markdown(answer)
 
-                # Optional: show sources
+                # Optional: show source chunks (good for debugging)
                 with st.expander("Used document chunks"):
                     for i, doc in enumerate(result["source_documents"]):
                         st.write(f"**Chunk {i+1}**  \n{doc.page_content[:400]}...")
 
             except Exception as e:
-                error_msg = f"Error: {str(e)}"
+                error_msg = f"Error during generation: {str(e)}"
                 st.error(error_msg)
-                answer = error_msg  # so we can still save it to history
+                answer = error_msg  # still save something to history
 
-    # Save assistant response to history (now answer is always defined)
+    # Save assistant message to history
     st.session_state.messages.append({"role": "assistant", "content": answer})
