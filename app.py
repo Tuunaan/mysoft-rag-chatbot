@@ -1,11 +1,10 @@
 import streamlit as st
-import os
-from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.chains import ConversationalRetrievalChain
 from langchain.prompts import PromptTemplate
 from langchain.memory import ConversationBufferMemory
+from langchain_openai import ChatOpenAI
 
 # ────────────────────────────────────────────────
 # 1. Load embeddings & vector store
@@ -27,28 +26,27 @@ def load_vectorstore():
 vector_store = load_vectorstore()
 
 # ────────────────────────────────────────────────
-# 2. LLM setup (using ChatHuggingFace wrapper)
+# 2. LLM setup using HuggingFace router
 # ────────────────────────────────────────────────
 @st.cache_resource
 def get_llm():
-    hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+    hf_token = st.secrets["HUGGINGFACEHUB_API_TOKEN"]
+
     if not hf_token:
-        st.error("HUGGINGFACEHUB_API_TOKEN not found in environment variables.")
+        st.error("HUGGINGFACEHUB_API_TOKEN not found in Streamlit secrets.")
         st.stop()
 
     try:
-        endpoint = HuggingFaceEndpoint(
-            repo_id="HuggingFaceH4/zephyr-7b-beta",          # very reliable on free tier
-            # repo_id="mistralai/Mistral-7B-Instruct-v0.3",  # ← uncomment if you prefer (may need task="conversational")
-            huggingfacehub_api_token=hf_token,
+        llm = ChatOpenAI(
+            model="HuggingFaceH4/zephyr-7b-beta",  # reliable free-tier model
+            openai_api_key=hf_token,
+            openai_api_base="https://router.huggingface.co/v1",
             temperature=0.15,
-            max_new_tokens=600,
-            timeout=120,
+            max_tokens=600
         )
-        return ChatHuggingFace(llm=endpoint)
+        return llm
     except Exception as e:
-        st.error(f"Failed to initialize HuggingFace Endpoint: {str(e)}")
-        st.info("Check token validity, quota, or try a different model.")
+        st.error(f"Failed to initialize model: {str(e)}")
         st.stop()
 
 llm = get_llm()
@@ -97,7 +95,7 @@ qa_chain = ConversationalRetrievalChain.from_llm(
 )
 
 # ────────────────────────────────────────────────
-# Streamlit UI
+# 5. Streamlit UI
 # ────────────────────────────────────────────────
 st.title("Mysoft Heaven AI Assistant")
 st.caption("Ask questions about Mysoft Heaven (BD) Ltd. only")
@@ -118,12 +116,12 @@ if user_input := st.chat_input("Ask a question about the company..."):
     with st.chat_message("user"):
         st.markdown(user_input)
 
-    # Generate response
+    # Generate response safely
+    answer = ""
     with st.chat_message("assistant"):
         with st.spinner("Searching company information..."):
             try:
                 result = qa_chain.invoke({"question": user_input})
-
                 answer = result["answer"].strip()
                 sources = result["source_documents"]
 
@@ -137,12 +135,9 @@ if user_input := st.chat_input("Ask a question about the company..."):
                             st.markdown(f"**Chunk {i}**  \n{content[:450]}{'...' if len(content) > 450 else ''}")
 
             except Exception as e:
-                error_msg = str(e).lower()
-                if "token" in error_msg or "quota" in error_msg:
-                    st.error("Hugging Face API issue (token / rate limit / model unavailable)")
-                else:
-                    st.error(f"Error during generation: {str(e)}")
-                st.info("The team has been notified. Please try again later.")
+                answer = "Sorry, I am currently unable to process your request. Please try again later."
+                st.error(f"Error during generation.")
+                st.markdown(answer)
 
     # Save assistant response
     st.session_state.messages.append({"role": "assistant", "content": answer})
