@@ -4,7 +4,7 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.chains import ConversationalRetrievalChain
 from langchain.prompts import PromptTemplate
 from langchain.memory import ConversationBufferMemory
-from langchain.chat_models import HFChatModel
+from langchain.chat_models import HuggingFaceChat
 
 # ────────────────────────────────────────────────
 # 1. Load embeddings & vector store
@@ -26,7 +26,7 @@ def load_vectorstore():
 vector_store = load_vectorstore()
 
 # ────────────────────────────────────────────────
-# 2. LLM setup using HuggingFace router
+# 2. LLM setup using HuggingFaceChat
 # ────────────────────────────────────────────────
 @st.cache_resource
 def get_llm():
@@ -37,12 +37,12 @@ def get_llm():
         st.stop()
 
     try:
-        llm = HFChatModel.from_hf_api(
-            model="HuggingFaceH4/zephyr-7b-beta",  # reliable free-tier model
-            api_key=hf_token,
-            endpoint_url="https://router.huggingface.co/v1",
+        llm = HuggingFaceChat(
+            repo_id="HuggingFaceH4/zephyr-7b-beta",  # reliable free-tier model
+            task="text-generation",
+            huggingfacehub_api_token=hf_token,
             temperature=0.15,
-            max_output_tokens=600
+            max_new_tokens=600
         )
         return llm
     except Exception as e:
