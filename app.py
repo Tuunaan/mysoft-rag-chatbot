@@ -4,7 +4,7 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.chains import ConversationalRetrievalChain
 from langchain.prompts import PromptTemplate
 from langchain.memory import ConversationBufferMemory
-from langchain_openai import ChatOpenAI
+from langchain.chat_models import HFChatModel
 
 # ────────────────────────────────────────────────
 # 1. Load embeddings & vector store
@@ -37,16 +37,16 @@ def get_llm():
         st.stop()
 
     try:
-        llm = ChatOpenAI(
+        llm = HFChatModel.from_hf_api(
             model="HuggingFaceH4/zephyr-7b-beta",  # reliable free-tier model
-            openai_api_key=hf_token,
-            openai_api_base="https://router.huggingface.co/v1",
+            api_key=hf_token,
+            endpoint_url="https://router.huggingface.co/v1",
             temperature=0.15,
-            max_tokens=600
+            max_output_tokens=600
         )
         return llm
     except Exception as e:
-        st.error(f"Failed to initialize model: {str(e)}")
+        st.error(f"Failed to initialize HuggingFace model: {str(e)}")
         st.stop()
 
 llm = get_llm()
